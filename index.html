@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>몬스터 클리커 게임 - 일러스트 버전</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 드래그 및 텍스트 선택 방지 (클릭 게임에 필수) */
+        body { user-select: none; -webkit-user-select: none; }
+        
+        /* 몬스터 피격 애니메이션 */
+        @keyframes hit {
+            0% { transform: scale(1) rotate(0deg); filter: brightness(1) drop-shadow(0 0 0 rgba(255, 0, 0, 0)); }
+            50% { transform: scale(0.9) rotate(-3deg); filter: brightness(1.8) drop-shadow(0 0 20px rgba(255, 0, 0, 0.8)); }
+            100% { transform: scale(1) rotate(0deg); filter: brightness(1) drop-shadow(0 0 0 rgba(255, 0, 0, 0)); }
+        }
+        .animate-hit { animation: hit 0.1s ease-in-out; }
+
+        /* 데미지 텍스트 애니메이션 */
+        @keyframes floatUp {
+            0% { opacity: 1; transform: translateY(0) scale(1); }
+            100% { opacity: 0; transform: translateY(-70px) scale(1.6); }
+        }
+        .damage-text {
+            position: absolute;
+            color: #ff4444;
+            font-weight: 800;
+            font-size: 1.8rem;
+            pointer-events: none;
+            animation: floatUp 0.8s ease-out forwards;
+            text-shadow: 2px 2px 0 #000, -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000;
+            z-index: 10;
+        }
+
+        /* 슬래쉬 이펙트 애니메이션 */
+        @keyframes slashAnim {
+            0% { transform: translate(-50%, -50%) scale(0.2) rotate(var(--angle, -45deg)); opacity: 1; }
+            100% { transform: translate(-50%, -50%) scale(1.5) rotate(var(--angle, -45deg)); opacity: 0; }
+        }
+        .slash-effect {
+            position: absolute;
+            width: 150px;
+            height: 8px;
+            background: linear-gradient(90deg, transparent, #ffffff, transparent);
+            box-shadow: 0 0 15px #ffffff, 0 0 20px #eab308;
+            border-radius: 50%;
+            pointer-events: none;
+            animation: slashAnim 0.15s ease-out forwards;
+            z-index: 20;
+        }
+
+        /* 로딩 스피너 애니메이션 */
+        .loader {
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            border-top: 4px solid #3b82f6;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            display: none;
+            z-index: 5;
+        }
+        @keyframes spin {
+            0% { transform: translate(-50%, -50%) rotate(0deg); }
+            100% { transform: translate(-50%, -50%) rotate(360deg); }
+        }
+        .is-loading .loader { display: block; }
+        .is-loading img { opacity: 0; pointer-events: none; }
+    </style>
+</head>
+<body class="bg-gray-950 text-white h-screen flex flex-col font-sans overflow-hidden">
+
+    <header class="bg-gray-900 p-4 shadow-lg flex justify-between items-center border-b border-gray-800">
+        <div class="flex items-center gap-4">
+            <div class="text-3xl font-extrabold text-yellow-400">💰 <span id="moneyDisplay">0</span> G</div>
+        </div>
+        <div class="text-right">
+            <div class="text-2xl font-bold text-blue-300">무기: +<span id="weaponLevelDisplay">0</span></div>
+            <div class="text-sm text-gray-400">클릭/스페이스 데미지: <span id="damageDisplay" class="text-white font-bold">1</span></div>
+        </div>
+    </header>
+
+    <main class="flex-1 flex flex-col items-center justify-center relative p-6">
+        
+        <div class="text-3xl font-extrabold mb-8 text-gray-300 tracking-wider">
+            스테이지 <span id="stageDisplay" class="text-white">1</span>
+        </div>
+
+        <div class="w-full max-w-xl mb-3 flex justify-between text-base font-bold">
+            <span class="text-red-400">HP</span>
+            <span><span id="currentHpDisplay">100</span> / <span id="maxHpDisplay">100</span></span>
+        </div>
+        <div class="w-full max-w-xl h-10 bg-gray-800 rounded-full border-4 border-gray-700 overflow-hidden mb-12 shadow-inner relative">
+            <div id="hpBar" class="h-full bg-gradient-to-r from-red-700 to-red-400 w-full transition-all duration-75"></div>
+        </div>
+
+        <div id="monsterContainer" class="relative cursor-pointer select-none">
+            <div class="loader" id="monsterLoader"></div>
+            <img id="monsterImage" src="" class="h-64 w-64 transform transition-transform hover:scale-105 active:scale-95 drop-shadow-2xl object-contain">
+        </div>
+
+        <!-- 우측 하단 무기 표시 영역 -->
+        <div class="absolute bottom-4 right-4 flex flex-col items-center bg-gray-900 p-3 rounded-xl border-2 border-gray-700 shadow-2xl z-30">
+            <div class="text-blue-300 font-bold mb-2">무기: +<span id="weaponUiLevelDisplay">0</span></div>
+            <div id="weaponImageContainer" class="relative w-24 h-24 bg-gray-800 rounded-lg flex items-center justify-center border border-gray-600">
+                <div class="loader" id="weaponLoader"></div>
+                <img id="weaponImage" src="" class="max-w-full max-h-full object-contain drop-shadow-lg">
+            </div>
+        </div>
+    </main>
+
+    <footer class="bg-gray-900 border-t-2 border-gray-800 p-8 flex flex-col items-center">
+        <div id="logMessage" class="text-gray-300 h-8 mb-6 font-bold text-lg text-center">
+            [테스트 보너스 100G 지급] 강화를 누르거나 몬스터를 공격하세요!
+        </div>
+
+        <button id="upgradeBtn" class="bg-blue-700 hover:bg-blue-500 active:bg-blue-800 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-extrabold py-4 px-10 rounded-2xl shadow-xl transition-colors w-full max-w-md flex flex-col items-center border-2 border-blue-500">
+            <span class="text-xl" id="upgradeBtnText">무기 강화하기</span>
+            <span class="text-sm font-medium text-blue-200 mt-1">비용: <span id="upgradeCostDisplay">10</span> G</span>
+        </button>
+
+        <div class="flex gap-6 mt-6 text-sm font-bold bg-black px-6 py-3 rounded-lg border border-gray-700">
+            <span class="text-green-400">성공: <span id="probSuccess">50</span>%</span>
+            <span class="text-yellow-400">유지: <span id="probFail">35</span>%</span>
+            <span class="text-red-400">파괴: <span id="probDestroy">15</span>%</span>
+        </div>
+    </footer>
+
+    <script>
+        // --- 1. 게임 상태 및 설정 ---
+        const apiKey = ""; 
+        
+        // UI를 차단하는 로딩 상태 (현재 화면의 이미지)
+        let isMonsterLoading = false;
+        let isWeaponLoading = false;
+
+        // 사전 로딩된 이미지들을 저장하는 메모리 캐시 (핵심 시스템)
+        const imageCache = {
+            monsters: {}, // { stageIndex: "base64Data" }
+            weapons: {},  // { level: "base64Data" }
+            // 중복 요청 방지를 위한 프로미스(Promise) 락
+            fetching: { monsters: {}, weapons: {} } 
+        };
+        const PRELOAD_BUFFER = 3; // 몇 단계 앞까지 미리 생성해둘지 설정 (3개면 적당)
+
+        // 테스트를 위해 초기 자본 100G 지급 (원래는 0)
+        let money = 100;
+        let weaponLevel = 0;
+        const MAX_WEAPON_LEVEL = 14;
+        let damage = 1;
+        
+        let stage = 1;
+        let maxHp = 100;
+        let currentHp = 100;
+        let upgradeCost = 10;
+
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+
+        const monsterPrompts = [
+            "A cute pixel art slime monster, video game sprite",
+            "A fierce fantasy wolf monster, sharp fangs, 2d game art",
+            "A giant angry bear mutant, glowing red eyes, 2d game art",
+            "A corrupted wild boar monster with tusks, dark fantasy, 2d game art",
+            "A demonic mutant dog, hellish fire, 2d game art",
+            "A huge fiery dragon boss monster, epic 2d game art"
+        ];
+
+        const weaponPrompts = [
+            "A rusty wooden practice sword, 2d game art icon", // 0
+            "A basic copper shortsword, 2d game art icon", // 1
+            "A sharp iron sword, 2d game art icon", // 2
+            "A polished steel broadsword, 2d game art icon", // 3
+            "A gleaming silver knight's sword, 2d game art icon", // 4
+            "A golden paladin's blade, 2d game art icon", // 5
+            "A glowing blue magic crystal sword, 2d game art icon", // 6
+            "A flaming fire elemental blade, 2d game art icon", // 7
+            "A crackling lightning thunder sword, 2d game art icon", // 8
+            "A dark corrupted shadow blade emitting dark aura, 2d game art icon", // 9
+            "A radiant holy light bringer sword, epic 2d game art", // 10
+            "A mythical dragon bone greatsword with glowing runes, epic 2d game art", // 11
+            "A legendary starlight astral blade, cosmic energy, epic 2d game art", // 12
+            "A god-tier universe rendering cosmic sword, floating particles, masterpiece", // 13
+            "The ultimate transcendent infinity blade, glowing with all elemental powers, ultimate weapon, masterpiece" // 14
+        ];
+
+        const upgradeStats = [
+            { success: 90, fail: 10, destroy: 0 },   // 0
+            { success: 85, fail: 15, destroy: 0 },   // 1
+            { success: 80, fail: 20, destroy: 0 },   // 2
+            { success: 70, fail: 25, destroy: 5 },   // 3
+            { success: 60, fail: 30, destroy: 10 },  // 4
+            { success: 50, fail: 35, destroy: 15 },  // 5
+            { success: 45, fail: 35, destroy: 20 },  // 6
+            { success: 40, fail: 35, destroy: 25 },  // 7
+            { success: 35, fail: 35, destroy: 30 },  // 8
+            { success: 30, fail: 30, destroy: 40 },  // 9
+            { success: 25, fail: 30, destroy: 45 },  // 10
+            { success: 20, fail: 25, destroy: 55 },  // 11
+            { success: 15, fail: 25, destroy: 60 },  // 12
+            { success: 5,  fail: 20, destroy: 75 },  // 13
+            { success: 0,  fail: 0,  destroy: 0 }    // 14 MAX
+        ];
+
+        // --- 2. HTML 요소 가져오기 ---
+        const ui = {
+            money: document.getElementById('moneyDisplay'),
+            weaponLevel: document.getElementById('weaponLevelDisplay'),
+            damage: document.getElementById('damageDisplay'),
+            stage: document.getElementById('stageDisplay'),
+            currentHp: document.getElementById('currentHpDisplay'),
+            maxHp: document.getElementById('maxHpDisplay'),
+            hpBar: document.getElementById('hpBar'),
+            monster: document.getElementById('monsterImage'),
+            monsterContainer: document.getElementById('monsterContainer'),
+            upgradeBtn: document.getElementById('upgradeBtn'),
+            upgradeCost: document.getElementById('upgradeCostDisplay'),
+            upgradeBtnText: document.getElementById('upgradeBtnText'),
+            log: document.getElementById('logMessage'),
+            weaponImage: document.getElementById('weaponImage'),
+            weaponContainer: document.getElementById('weaponImageContainer'),
+            weaponUiLevel: document.getElementById('weaponUiLevelDisplay'),
+            probSuccess: document.getElementById('probSuccess'),
+            probFail: document.getElementById('probFail'),
+            probDestroy: document.getElementById('probDestroy')
+        };
+
+        // --- 3. 유틸리티: 이미지 로딩 및 프로세싱 ---
+        function makeBackgroundTransparent(base64Image) {
+            return new Promise((resolve) => {
+                const img = new Image();
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+                    
+                    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                    const data = imageData.data;
+                    
+                    // 흰색에 가까운 픽셀(배경) 투명화
+                    for (let i = 0; i < data.length; i += 4) {
+                        if (data[i] > 235 && data[i + 1] > 235 && data[i + 2] > 235) {
+                            data[i + 3] = 0; 
+                        }
+                    }
+                    ctx.putImageData(imageData, 0, 0);
+                    resolve(canvas.toDataURL('image/png'));
+                };
+                img.onerror = () => resolve(base64Image); 
+                img.src = base64Image;
+            });
+        }
+
+        async function fetchWithRetry(url, options, retries = 3) {
+            const delays = [1000, 2000, 4000];
+            for (let i = 0; i < retries; i++) {
+                try {
+                    const response = await fetch(url, options);
+                    if (!response.ok) throw new Error(`API error! status: ${response.status}`);
+                    return await response.json();
+                } catch (e) {
+                    if (i === retries - 1) throw e;
+                    await new Promise(res => setTimeout(res, delays[i]));
+                }
+            }
+        }
+
+        function createFallbackImage(text, color) {
+            const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400"><rect width="400" height="400" fill="transparent"/><circle cx="200" cy="200" r="150" fill="${color}"/><text x="200" y="210" font-family="sans-serif" font-size="40" text-anchor="middle" fill="#fff">${text}</text></svg>`;
+            return `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
+        }
+
+        // --- 4. 화면 업데이트 로직 ---
+        function updateUI() {
+            ui.money.textContent = money;
+            ui.weaponLevel.textContent = weaponLevel === MAX_WEAPON_LEVEL ? "MAX" : weaponLevel;
+            ui.weaponUiLevel.textContent = weaponLevel === MAX_WEAPON_LEVEL ? "MAX" : weaponLevel;
+            ui.damage.textContent = damage;
+            ui.stage.textContent = stage;
+            ui.currentHp.textContent = Math.max(0, currentHp);
+            ui.maxHp.textContent = maxHp;
+            
+            if (weaponLevel >= MAX_WEAPON_LEVEL) {
+                ui.upgradeCost.textContent = "-";
+                ui.probSuccess.textContent = "0";
+                ui.probFail.textContent = "0";
+                ui.probDestroy.textContent = "0";
+                ui.upgradeBtn.disabled = true;
+                ui.upgradeBtnText.textContent = "최대 레벨 달성!";
+            } else {
+                ui.upgradeCost.textContent = upgradeCost;
+                const stats = upgradeStats[weaponLevel];
+                ui.probSuccess.textContent = stats.success;
+                ui.probFail.textContent = stats.fail;
+                ui.probDestroy.textContent = stats.destroy;
+                ui.upgradeBtnText.textContent = "무기 강화하기";
+                
+                // 골드 부족 또는 현재 무기가 로딩 중일 때 버튼 비활성화
+                ui.upgradeBtn.disabled = money < upgradeCost || isWeaponLoading;
+            }
+
+            const hpPercent = (currentHp / maxHp) * 100;
+            ui.hpBar.style.width = `${Math.max(0, hpPercent)}%`;
+        }
+
+        function showLog(message, colorClass = 'text-gray-300') {
+            ui.log.textContent = message;
+            ui.log.className = `h-8 mb-6 font-bold text-lg text-center ${colorClass}`;
+        }
+
+        // --- 5. 백그라운드 사전 생성 및 캐싱 로직 (핵심) ---
+        
+        // 몬스터 이미지 원격 호출 및 캐시 저장 함수 (화면 적용 X)
+        async function fetchMonsterImage(stageIndex) {
+            // 이미 완료된 캐시가 있으면 반환
+            if (imageCache.monsters[stageIndex]) return imageCache.monsters[stageIndex];
+            // 이미 생성 요청이 진행 중이면 해당 프로미스 반환 (중복 호출 방지)
+            if (imageCache.fetching.monsters[stageIndex]) return imageCache.fetching.monsters[stageIndex];
+            
+            const promptText = monsterPrompts[stageIndex % monsterPrompts.length] + ", masterpiece, solid pure white background";
+
+            const fetchPromise = (async () => {
+                let finalImage;
+                try {
+                    const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`;
+                    const result = await fetchWithRetry(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ instances: { prompt: promptText }, parameters: { sampleCount: 1 } })
+                    });
+                    
+                    if (result.predictions && result.predictions[0]) {
+                        const rawBase64 = `data:image/png;base64,${result.predictions[0].bytesBase64Encoded}`;
+                        finalImage = await makeBackgroundTransparent(rawBase64);
+                    } else {
+                        throw new Error("No image data");
+                    }
+                } catch (e) {
+                    console.error("Background Monster Load Error:", e);
+                    finalImage = createFallbackImage(`Monster ${stageIndex + 1}`, '#ef4444');
+                }
+                
+                // 캐시에 저장 후 fetching 락 해제
+                imageCache.monsters[stageIndex] = finalImage;
+                delete imageCache.fetching.monsters[stageIndex];
+                return finalImage;
+            })();
+
+            // 락 걸기
+            imageCache.fetching.monsters[stageIndex] = fetchPromise;
+            return fetchPromise;
+        }
+
+        // 무기 이미지 원격 호출 및 캐시 저장 함수
+        async function fetchWeaponImage(level) {
+            if (level > MAX_WEAPON_LEVEL) return null;
+            // 이미 완료되었거나 진행 중이면 바로 반환
+            if (imageCache.weapons[level]) return imageCache.weapons[level];
+            if (imageCache.fetching.weapons[level]) return imageCache.fetching.weapons[level];
+
+            const promptText = weaponPrompts[level] + ", clean vector 2d game art, solid pure white background";
+            
+            const fetchPromise = (async () => {
+                let finalImage;
+                try {
+                    const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`;
+                    const result = await fetchWithRetry(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ instances: { prompt: promptText }, parameters: { sampleCount: 1 } })
+                    });
+                    
+                    if (result.predictions && result.predictions[0]) {
+                        const rawBase64 = `data:image/png;base64,${result.predictions[0].bytesBase64Encoded}`;
+                        finalImage = await makeBackgroundTransparent(rawBase64);
+                    } else {
+                        throw new Error("No weapon data");
+                    }
+                } catch (e) {
+                    console.error("Background Weapon Load Error:", e);
+                    finalImage = createFallbackImage(`+${level} WPN`, '#3b82f6');
+                }
+
+                imageCache.weapons[level] = finalImage;
+                delete imageCache.fetching.weapons[level];
+                return finalImage;
+            })();
+
+            imageCache.fetching.weapons[level] = fetchPromise;
+            return fetchPromise;
+        }
+
+        // --- 다중 사전 로딩(버퍼링) 큐 시스템 ---
+        // 지정된 버퍼(PRELOAD_BUFFER) 갯수만큼 순차적으로 미리 로딩해둡니다.
+        async function preloadMonsters(startStage) {
+            for (let i = 1; i <= PRELOAD_BUFFER; i++) {
+                const targetStage = startStage + i;
+                // 순차적으로 호출하여 트래픽 과부하 방지
+                await fetchMonsterImage(targetStage).catch(e => console.log(e));
+            }
+        }
+
+        async function preloadWeapons(startLevel) {
+            for (let i = 1; i <= PRELOAD_BUFFER; i++) {
+                const targetLevel = startLevel + i;
+                if (targetLevel <= MAX_WEAPON_LEVEL) {
+                    await fetchWeaponImage(targetLevel).catch(e => console.log(e));
+                }
+            }
+        }
+
+        // --- 6. 화면 적용 로직 ---
+        
+        // 화면에 몬스터를 보여주는 함수
+        async function applyMonster(stageIndex) {
+            // 캐시에 없으면(유저 진행이 너무 빠르면) 로딩 스피너 표시
+            if (!imageCache.monsters[stageIndex]) {
+                isMonsterLoading = true;
+                ui.monsterContainer.classList.add('is-loading');
+                showLog(`몬스터를 불러오는 중입니다...`, 'text-blue-300');
+            }
+
+            // fetch 함수 호출 (캐시에 있으면 0초만에 반환, 없으면 대기)
+            const imgSrc = await fetchMonsterImage(stageIndex);
+            
+            ui.monster.src = imgSrc;
+            ui.monsterContainer.classList.remove('is-loading');
+            isMonsterLoading = false;
+            showLog(`스테이지 ${stage} 시작! 몬스터를 공격하세요.`, 'text-white');
+
+            // [핵심] 현재 몬스터 로딩 완료 후, 설정된 버퍼(예: 3단계)만큼 다중 사전 로딩 시작
+            preloadMonsters(stageIndex);
+        }
+
+        // 화면에 무기를 보여주는 함수
+        async function applyWeapon(level) {
+            if (!imageCache.weapons[level]) {
+                isWeaponLoading = true;
+                ui.weaponContainer.classList.add('is-loading');
+                updateUI(); // 버튼 잠금
+            }
+
+            const imgSrc = await fetchWeaponImage(level);
+            
+            ui.weaponImage.src = imgSrc;
+            ui.weaponContainer.classList.remove('is-loading');
+            isWeaponLoading = false;
+            updateUI(); // 버튼 해제
+
+            // [핵심] 다음 여러 단계 무기 다중 사전 로딩 시작
+            preloadWeapons(level);
+        }
+
+        // --- 7. 전투 및 강화 로직 ---
+        function attack(e) {
+            // 몬스터 이미지가 화면에 로딩 중일 때만 공격 불가 (백그라운드 로딩은 공격에 영향 안 줌)
+            if (isMonsterLoading || currentHp <= 0) return;
+
+            currentHp -= damage;
+            
+            playHitEffect();
+            showDamageText(e);
+            showSlashEffect(e);
+            playSlashSound();
+
+            if (currentHp <= 0) {
+                killMonster();
+            } else {
+                updateUI();
+            }
+        }
+
+        function playHitEffect() {
+            ui.monster.classList.remove('animate-hit');
+            void ui.monster.offsetWidth; 
+            ui.monster.classList.add('animate-hit');
+        }
+
+        function showDamageText(e) {
+            const rect = ui.monsterContainer.getBoundingClientRect();
+            let clientX = rect.left + rect.width / 2, clientY = rect.top + rect.height / 2;
+            
+            if (e && (e.clientX || (e.touches && e.touches[0]))) {
+                clientX = e.clientX || e.touches[0].clientX;
+                clientY = e.clientY || e.touches[0].clientY;
+            }
+
+            const damageEl = document.createElement('div');
+            damageEl.textContent = `-${damage}`;
+            damageEl.className = 'damage-text';
+            
+            damageEl.style.left = `${clientX - rect.left + (Math.random() - 0.5) * 50}px`;
+            damageEl.style.top = `${clientY - rect.top + (Math.random() - 0.5) * 30}px`;
+            ui.monsterContainer.appendChild(damageEl);
+
+            setTimeout(() => damageEl.remove(), 800);
+        }
+
+        function showSlashEffect(e) {
+            const rect = ui.monsterContainer.getBoundingClientRect();
+            let clientX = rect.left + rect.width / 2, clientY = rect.top + rect.height / 2;
+            
+            if (e && (typeof e.clientX !== 'undefined' || (e.touches && e.touches[0]))) {
+                clientX = typeof e.clientX !== 'undefined' ? e.clientX : e.touches[0].clientX;
+                clientY = typeof e.clientY !== 'undefined' ? e.clientY : e.touches[0].clientY;
+            }
+
+            const slashEl = document.createElement('div');
+            slashEl.className = 'slash-effect';
+            slashEl.style.left = `${clientX - rect.left}px`;
+            slashEl.style.top = `${clientY - rect.top}px`;
+            slashEl.style.setProperty('--angle', `${Math.random() * 360}deg`);
+
+            ui.monsterContainer.appendChild(slashEl);
+            setTimeout(() => slashEl.remove(), 150);
+        }
+
+        function playSlashSound() {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'sawtooth';
+            oscillator.frequency.setValueAtTime(800, audioCtx.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(50, audioCtx.currentTime + 0.1);
+            
+            gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.1);
+        }
+
+        function killMonster() {
+            const reward = 5 + (stage * 3);
+            money += reward;
+            showLog(`⚔️ 스테이지 처치! +${reward} G 획득`, 'text-yellow-400');
+
+            stage++;
+            maxHp = Math.floor(maxHp * 1.4);
+            currentHp = maxHp;
+
+            updateUI();
+            
+            // 캐시에서 다음 몬스터 불러오기 (이미 생성되어 있다면 즉시 반영됨)
+            applyMonster(stage - 1);
+        }
+
+        function tryUpgrade() {
+            if (money < upgradeCost || weaponLevel >= MAX_WEAPON_LEVEL || isWeaponLoading) return;
+
+            money -= upgradeCost;
+            const stats = upgradeStats[weaponLevel];
+            const roll = Math.floor(Math.random() * 100);
+
+            if (roll < stats.success) {
+                weaponLevel++;
+                showLog(`✨ 강화 성공! 무기가 +${weaponLevel}(이)가 되었습니다!`, 'text-green-400');
+                // 캐시에서 다음 단계 무기 불러오기
+                applyWeapon(weaponLevel);
+            } else if (roll < stats.success + stats.fail) {
+                showLog(`💦 강화 실패... 다행히 무기는 유지되었습니다.`, 'text-yellow-400');
+            } else {
+                weaponLevel = 0;
+                showLog(`💥 앗! 무기가 파괴되어 레벨이 0으로 초기화되었습니다!`, 'text-red-500');
+                // 0강 무기는 게임 시작 때 이미 캐싱되어 있으므로 로딩 0초
+                applyWeapon(weaponLevel);
+            }
+
+            damage = 1 + (weaponLevel * 3) + Math.floor(Math.pow(weaponLevel, 1.6));
+            upgradeCost = 10 + (weaponLevel * 20) + Math.floor(Math.pow(weaponLevel, 2.5));
+
+            updateUI();
+        }
+
+        // --- 8. 이벤트 리스너 ---
+        ui.monsterContainer.addEventListener('mousedown', attack);
+        ui.monsterContainer.addEventListener('touchstart', (e) => {
+            e.preventDefault(); 
+            attack(e);
+        }, { passive: false });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.repeat) return; 
+            if (e.code === 'Space') {
+                e.preventDefault(); 
+                attack(null); 
+            }
+        });
+
+        ui.upgradeBtn.addEventListener('click', tryUpgrade);
+
+        // --- 9. 초기 실행 ---
+        updateUI();
+        
+        // 게임 시작 시 0스테이지 몬스터, 0강 무기 적용 (적용 완료 시 내부에서 1스테이지/1강 백그라운드 로딩 자동 시작)
+        applyMonster(0); 
+        applyWeapon(0); 
+
+    </script>
+</body>
+</html>
