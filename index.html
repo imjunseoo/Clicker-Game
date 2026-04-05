@@ -133,22 +133,20 @@
 
     <script>
         // --- 1. 게임 상태 및 설정 ---
-        const apiKey = ""; 
         
         // UI를 차단하는 로딩 상태 (현재 화면의 이미지)
         let isMonsterLoading = false;
         let isWeaponLoading = false;
 
-        // 사전 로딩된 이미지들을 저장하는 메모리 캐시 (핵심 시스템)
+        // 사전 로딩된 이미지들을 저장하는 메모리 캐시
         const imageCache = {
-            monsters: {}, // { stageIndex: "base64Data" }
-            weapons: {},  // { level: "base64Data" }
-            // 중복 요청 방지를 위한 프로미스(Promise) 락
+            monsters: {}, 
+            weapons: {},  
             fetching: { monsters: {}, weapons: {} } 
         };
-        const PRELOAD_BUFFER = 3; // 몇 단계 앞까지 미리 생성해둘지 설정 (3개면 적당)
+        const PRELOAD_BUFFER = 3;
 
-        // 테스트를 위해 초기 자본 100G 지급 (원래는 0)
+        // 초기 설정값
         let money = 100;
         let weaponLevel = 0;
         const MAX_WEAPON_LEVEL = 14;
@@ -161,33 +159,6 @@
 
         const AudioContext = window.AudioContext || window.webkitAudioContext;
         const audioCtx = new AudioContext();
-
-        const monsterPrompts = [
-            "A cute pixel art slime monster, video game sprite",
-            "A fierce fantasy wolf monster, sharp fangs, 2d game art",
-            "A giant angry bear mutant, glowing red eyes, 2d game art",
-            "A corrupted wild boar monster with tusks, dark fantasy, 2d game art",
-            "A demonic mutant dog, hellish fire, 2d game art",
-            "A huge fiery dragon boss monster, epic 2d game art"
-        ];
-
-        const weaponPrompts = [
-            "A rusty wooden practice sword, 2d game art icon", // 0
-            "A basic copper shortsword, 2d game art icon", // 1
-            "A sharp iron sword, 2d game art icon", // 2
-            "A polished steel broadsword, 2d game art icon", // 3
-            "A gleaming silver knight's sword, 2d game art icon", // 4
-            "A golden paladin's blade, 2d game art icon", // 5
-            "A glowing blue magic crystal sword, 2d game art icon", // 6
-            "A flaming fire elemental blade, 2d game art icon", // 7
-            "A crackling lightning thunder sword, 2d game art icon", // 8
-            "A dark corrupted shadow blade emitting dark aura, 2d game art icon", // 9
-            "A radiant holy light bringer sword, epic 2d game art", // 10
-            "A mythical dragon bone greatsword with glowing runes, epic 2d game art", // 11
-            "A legendary starlight astral blade, cosmic energy, epic 2d game art", // 12
-            "A god-tier universe rendering cosmic sword, floating particles, masterpiece", // 13
-            "The ultimate transcendent infinity blade, glowing with all elemental powers, ultimate weapon, masterpiece" // 14
-        ];
 
         const upgradeStats = [
             { success: 90, fail: 10, destroy: 0 },   // 0
@@ -230,54 +201,7 @@
             probDestroy: document.getElementById('probDestroy')
         };
 
-        // --- 3. 유틸리티: 이미지 로딩 및 프로세싱 ---
-        function makeBackgroundTransparent(base64Image) {
-            return new Promise((resolve) => {
-                const img = new Image();
-                img.onload = () => {
-                    const canvas = document.createElement('canvas');
-                    canvas.width = img.width;
-                    canvas.height = img.height;
-                    const ctx = canvas.getContext('2d');
-                    ctx.drawImage(img, 0, 0);
-                    
-                    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                    const data = imageData.data;
-                    
-                    // 흰색에 가까운 픽셀(배경) 투명화
-                    for (let i = 0; i < data.length; i += 4) {
-                        if (data[i] > 235 && data[i + 1] > 235 && data[i + 2] > 235) {
-                            data[i + 3] = 0; 
-                        }
-                    }
-                    ctx.putImageData(imageData, 0, 0);
-                    resolve(canvas.toDataURL('image/png'));
-                };
-                img.onerror = () => resolve(base64Image); 
-                img.src = base64Image;
-            });
-        }
-
-        async function fetchWithRetry(url, options, retries = 3) {
-            const delays = [1000, 2000, 4000];
-            for (let i = 0; i < retries; i++) {
-                try {
-                    const response = await fetch(url, options);
-                    if (!response.ok) throw new Error(`API error! status: ${response.status}`);
-                    return await response.json();
-                } catch (e) {
-                    if (i === retries - 1) throw e;
-                    await new Promise(res => setTimeout(res, delays[i]));
-                }
-            }
-        }
-
-        function createFallbackImage(text, color) {
-            const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400"><rect width="400" height="400" fill="transparent"/><circle cx="200" cy="200" r="150" fill="${color}"/><text x="200" y="210" font-family="sans-serif" font-size="40" text-anchor="middle" fill="#fff">${text}</text></svg>`;
-            return `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
-        }
-
-        // --- 4. 화면 업데이트 로직 ---
+        // --- 3. 화면 업데이트 로직 ---
         function updateUI() {
             ui.money.textContent = money;
             ui.weaponLevel.textContent = weaponLevel === MAX_WEAPON_LEVEL ? "MAX" : weaponLevel;
@@ -302,7 +226,6 @@
                 ui.probDestroy.textContent = stats.destroy;
                 ui.upgradeBtnText.textContent = "무기 강화하기";
                 
-                // 골드 부족 또는 현재 무기가 로딩 중일 때 버튼 비활성화
                 ui.upgradeBtn.disabled = money < upgradeCost || isWeaponLoading;
             }
 
@@ -315,119 +238,76 @@
             ui.log.className = `h-8 mb-6 font-bold text-lg text-center ${colorClass}`;
         }
 
-        // --- 5. 백그라운드 사전 생성 및 캐싱 로직 (핵심) ---
+        // --- 4. 백그라운드 사전 생성 및 캐싱 로직 (오픈소스 API 적용) ---
         
-        // 몬스터 이미지 원격 호출 및 캐시 저장 함수 (화면 적용 X)
         async function fetchMonsterImage(stageIndex) {
-            // 이미 완료된 캐시가 있으면 반환
             if (imageCache.monsters[stageIndex]) return imageCache.monsters[stageIndex];
-            // 이미 생성 요청이 진행 중이면 해당 프로미스 반환 (중복 호출 방지)
             if (imageCache.fetching.monsters[stageIndex]) return imageCache.fetching.monsters[stageIndex];
             
-            const promptText = monsterPrompts[stageIndex % monsterPrompts.length] + ", masterpiece, solid pure white background";
+            // Robohash API: 별도 키 없이 무작위 몬스터 이미지를 제공합니다. (set2=monsters)
+            const url = `https://robohash.org/monster_stage_${stageIndex}?set=set2&size=300x300`;
 
-            const fetchPromise = (async () => {
-                let finalImage;
-                try {
-                    const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`;
-                    const result = await fetchWithRetry(url, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ instances: { prompt: promptText }, parameters: { sampleCount: 1 } })
-                    });
-                    
-                    if (result.predictions && result.predictions[0]) {
-                        const rawBase64 = `data:image/png;base64,${result.predictions[0].bytesBase64Encoded}`;
-                        finalImage = await makeBackgroundTransparent(rawBase64);
-                    } else {
-                        throw new Error("No image data");
-                    }
-                } catch (e) {
-                    console.error("Background Monster Load Error:", e);
-                    finalImage = createFallbackImage(`Monster ${stageIndex + 1}`, '#ef4444');
-                }
-                
-                // 캐시에 저장 후 fetching 락 해제
-                imageCache.monsters[stageIndex] = finalImage;
-                delete imageCache.fetching.monsters[stageIndex];
-                return finalImage;
-            })();
+            const fetchPromise = new Promise((resolve) => {
+                const img = new Image();
+                img.onload = () => {
+                    imageCache.monsters[stageIndex] = url;
+                    delete imageCache.fetching.monsters[stageIndex];
+                    resolve(url);
+                };
+                img.onerror = () => resolve(url);
+                img.src = url;
+            });
 
-            // 락 걸기
             imageCache.fetching.monsters[stageIndex] = fetchPromise;
             return fetchPromise;
         }
 
-        // 무기 이미지 원격 호출 및 캐시 저장 함수
         async function fetchWeaponImage(level) {
             if (level > MAX_WEAPON_LEVEL) return null;
-            // 이미 완료되었거나 진행 중이면 바로 반환
             if (imageCache.weapons[level]) return imageCache.weapons[level];
             if (imageCache.fetching.weapons[level]) return imageCache.fetching.weapons[level];
 
-            const promptText = weaponPrompts[level] + ", clean vector 2d game art, solid pure white background";
+            // Robohash API: 무기 아이콘 대신 무작위 로봇 일러스트 제공 (set1=robots)
+            const url = `https://robohash.org/weapon_level_${level}?set=set1&size=150x150`;
             
-            const fetchPromise = (async () => {
-                let finalImage;
-                try {
-                    const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`;
-                    const result = await fetchWithRetry(url, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ instances: { prompt: promptText }, parameters: { sampleCount: 1 } })
-                    });
-                    
-                    if (result.predictions && result.predictions[0]) {
-                        const rawBase64 = `data:image/png;base64,${result.predictions[0].bytesBase64Encoded}`;
-                        finalImage = await makeBackgroundTransparent(rawBase64);
-                    } else {
-                        throw new Error("No weapon data");
-                    }
-                } catch (e) {
-                    console.error("Background Weapon Load Error:", e);
-                    finalImage = createFallbackImage(`+${level} WPN`, '#3b82f6');
-                }
-
-                imageCache.weapons[level] = finalImage;
-                delete imageCache.fetching.weapons[level];
-                return finalImage;
-            })();
+            const fetchPromise = new Promise((resolve) => {
+                const img = new Image();
+                img.onload = () => {
+                    imageCache.weapons[level] = url;
+                    delete imageCache.fetching.weapons[level];
+                    resolve(url);
+                };
+                img.onerror = () => resolve(url);
+                img.src = url;
+            });
 
             imageCache.fetching.weapons[level] = fetchPromise;
             return fetchPromise;
         }
 
-        // --- 다중 사전 로딩(버퍼링) 큐 시스템 ---
-        // 지정된 버퍼(PRELOAD_BUFFER) 갯수만큼 순차적으로 미리 로딩해둡니다.
         async function preloadMonsters(startStage) {
             for (let i = 1; i <= PRELOAD_BUFFER; i++) {
-                const targetStage = startStage + i;
-                // 순차적으로 호출하여 트래픽 과부하 방지
-                await fetchMonsterImage(targetStage).catch(e => console.log(e));
+                fetchMonsterImage(startStage + i).catch(e => console.log(e));
             }
         }
 
         async function preloadWeapons(startLevel) {
             for (let i = 1; i <= PRELOAD_BUFFER; i++) {
-                const targetLevel = startLevel + i;
-                if (targetLevel <= MAX_WEAPON_LEVEL) {
-                    await fetchWeaponImage(targetLevel).catch(e => console.log(e));
+                if (startLevel + i <= MAX_WEAPON_LEVEL) {
+                    fetchWeaponImage(startLevel + i).catch(e => console.log(e));
                 }
             }
         }
 
-        // --- 6. 화면 적용 로직 ---
+        // --- 5. 화면 적용 로직 ---
         
-        // 화면에 몬스터를 보여주는 함수
         async function applyMonster(stageIndex) {
-            // 캐시에 없으면(유저 진행이 너무 빠르면) 로딩 스피너 표시
             if (!imageCache.monsters[stageIndex]) {
                 isMonsterLoading = true;
                 ui.monsterContainer.classList.add('is-loading');
                 showLog(`몬스터를 불러오는 중입니다...`, 'text-blue-300');
             }
 
-            // fetch 함수 호출 (캐시에 있으면 0초만에 반환, 없으면 대기)
             const imgSrc = await fetchMonsterImage(stageIndex);
             
             ui.monster.src = imgSrc;
@@ -435,16 +315,14 @@
             isMonsterLoading = false;
             showLog(`스테이지 ${stage} 시작! 몬스터를 공격하세요.`, 'text-white');
 
-            // [핵심] 현재 몬스터 로딩 완료 후, 설정된 버퍼(예: 3단계)만큼 다중 사전 로딩 시작
             preloadMonsters(stageIndex);
         }
 
-        // 화면에 무기를 보여주는 함수
         async function applyWeapon(level) {
             if (!imageCache.weapons[level]) {
                 isWeaponLoading = true;
                 ui.weaponContainer.classList.add('is-loading');
-                updateUI(); // 버튼 잠금
+                updateUI(); 
             }
 
             const imgSrc = await fetchWeaponImage(level);
@@ -452,15 +330,13 @@
             ui.weaponImage.src = imgSrc;
             ui.weaponContainer.classList.remove('is-loading');
             isWeaponLoading = false;
-            updateUI(); // 버튼 해제
+            updateUI(); 
 
-            // [핵심] 다음 여러 단계 무기 다중 사전 로딩 시작
             preloadWeapons(level);
         }
 
-        // --- 7. 전투 및 강화 로직 ---
+        // --- 6. 전투 및 강화 로직 ---
         function attack(e) {
-            // 몬스터 이미지가 화면에 로딩 중일 때만 공격 불가 (백그라운드 로딩은 공격에 영향 안 줌)
             if (isMonsterLoading || currentHp <= 0) return;
 
             currentHp -= damage;
@@ -552,7 +428,6 @@
 
             updateUI();
             
-            // 캐시에서 다음 몬스터 불러오기 (이미 생성되어 있다면 즉시 반영됨)
             applyMonster(stage - 1);
         }
 
@@ -566,14 +441,12 @@
             if (roll < stats.success) {
                 weaponLevel++;
                 showLog(`✨ 강화 성공! 무기가 +${weaponLevel}(이)가 되었습니다!`, 'text-green-400');
-                // 캐시에서 다음 단계 무기 불러오기
                 applyWeapon(weaponLevel);
             } else if (roll < stats.success + stats.fail) {
                 showLog(`💦 강화 실패... 다행히 무기는 유지되었습니다.`, 'text-yellow-400');
             } else {
                 weaponLevel = 0;
                 showLog(`💥 앗! 무기가 파괴되어 레벨이 0으로 초기화되었습니다!`, 'text-red-500');
-                // 0강 무기는 게임 시작 때 이미 캐싱되어 있으므로 로딩 0초
                 applyWeapon(weaponLevel);
             }
 
@@ -583,7 +456,7 @@
             updateUI();
         }
 
-        // --- 8. 이벤트 리스너 ---
+        // --- 7. 이벤트 리스너 ---
         ui.monsterContainer.addEventListener('mousedown', attack);
         ui.monsterContainer.addEventListener('touchstart', (e) => {
             e.preventDefault(); 
@@ -600,10 +473,9 @@
 
         ui.upgradeBtn.addEventListener('click', tryUpgrade);
 
-        // --- 9. 초기 실행 ---
+        // --- 8. 초기 실행 ---
         updateUI();
         
-        // 게임 시작 시 0스테이지 몬스터, 0강 무기 적용 (적용 완료 시 내부에서 1스테이지/1강 백그라운드 로딩 자동 시작)
         applyMonster(0); 
         applyWeapon(0); 
 
